@@ -1,117 +1,101 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
+	"time"
+	"github.com/davecgh/go-spew/spew"
+	cp "github.com/otiai10/copy"
 )
-
-const begodeFirmwareListURL = "http://one-api.begode.com/agent/dog/wheel/dev/type/page?current=1&size=1000";
-const begodeWheelFirmwareListURL = "http://one-api.begode.com/api/version/one/version"
-const begodeFirmwareDownloadURL = "http://one-api.begode.com/imgs/temp/%s"
 
 func main() {
     fmt.Println("Hello from mfwarch!")
-	res, err := http.Get(begodeFirmwareListURL)
+
+	_, err := os.Stat("firmwares")
+	if os.IsNotExist(err) {
+		os.Mkdir("firmwares", 0770)
+		list := begodeDownloadAll("firmwares", []string{""})
+		file, err := os.Create("firmwares/firmwares.json")
+		if err != nil {
+			fmt.Printf("mfwarch: unable to create file: %s\n", err)
+			os.Exit(1)
+		}
+
+		fullList := FirmwareList {
+			LastUpdateTime: time.Now(),	
+			ChangesSinceLastUpdate: 0, // TODO: implement
+			Begode: list,
+		}
+
+		fwlist, err := json.MarshalIndent(fullList, "", " ")
+		if err != nil {
+			fmt.Printf("mfwarch: unable to serialize firmware list: %s\n", err)
+			os.Exit(1)
+		}
+
+		_, err = file.Write(fwlist)
+		if err != nil {
+			fmt.Printf("mfwarch: unable to save firmware: %s\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	fwList, err := getLocalFirmwareList("firmwares/firmwares.json")
 	if err != nil {
-		fmt.Printf("mfwarch: error while running: %s\n", err)
+		fmt.Printf("mfwarch: unable to get local firmware list: %s\n", err)
 		os.Exit(1)
 	}
-	defer res.Body.Close()
-	resBody, err := io.ReadAll(res.Body)
+	spew.Dump(fwList)
+
+	err = cp.Copy("firmwares", "firmwares2")
 	if err != nil {
-		fmt.Printf("mfwarch: couldn't get response body: %s\n", err)
+		fmt.Printf("mfwarch: unable to copy firmwares: %s\n", err)
+	}
+
+	list := begodeDownloadAll("firmwares2", []string{""})
+
+	file, err := os.Create("firmwares/firmwares.json")
+	if err != nil {
+		fmt.Printf("mfwarch: unable to create file: %s\n", err)
 		os.Exit(1)
 	}
-	var parsed BegodeAPIResponse[BegodeFirmwareList]
-	json.Unmarshal(resBody, &parsed)
-	fmt.Println("Downloading Begode firmwares...")
 
-	for _, element := range parsed.Data.Records {
-		req, err := http.NewRequest(http.MethodGet, begodeWheelFirmwareListURL, nil)
-		if err != nil {
-			fmt.Printf("mfwarch: error making http request: %s\n", err)
-			os.Exit(1)
-		}
-		q := req.URL.Query()
-		q.Add("firmwareTypeCode", element.Code)
-		req.URL.RawQuery = q.Encode()
+	fullList := FirmwareList {
+		LastUpdateTime: time.Now(),	
+		ChangesSinceLastUpdate: 0, // TODO: implement
+		Begode: list,
+	}
 
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			fmt.Printf("mfwarch: error making http request: %s\n", err)
-			os.Exit(1)
-		}
-		defer res.Body.Close()
+	fwlist, err := json.MarshalIndent(fullList, "", " ")
+	if err != nil {
+		fmt.Printf("mfwarch: unable to serialize firmware list: %s\n", err)
+		os.Exit(1)
+	}
 
-		resBody, err := io.ReadAll(res.Body)
-		if err != nil {
-			fmt.Printf("mfwarch: couldn't read response for firmware details: %s\n", err)
-			os.Exit(1)
-		}
-
-		var parsed BegodeAPIResponse[BegodeFirmwareDetails]
-		json.Unmarshal(resBody, &parsed)
-
-		fmt.Printf("Downloading from %s...\n", element.Name)
-		for _, fw := range parsed.Data.Records {
-			os.MkdirAll(fmt.Sprintf("firmwares/begode/%s", element.Name), 0770)
-			out, err := os.OpenFile(fmt.Sprintf(
-				"firmwares/begode/%s/%s.bin",
-				element.Name,
-				fw.BriefIntroduction), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				fmt.Printf("mfwarch: unable to create firmware file: %s\n", err)
-				os.Exit(1)
-			}
-			defer out.Close()
-
-			res, err := http.Get(fmt.Sprintf(begodeFirmwareDownloadURL, fw.ApkWrap))
-			if err != nil {
-				fmt.Printf("mfwarch: unable to download firmware file: %s\n", err)
-				os.Exit(1)
-			}
-			defer res.Body.Close()
-
-			_, err = io.Copy(out, res.Body)
-			if err != nil {
-				fmt.Printf("mfwarch: unable to save firmware: %s\n", err)
-				os.Exit(1)
-			}
-		}
+	_, err = file.Write(fwlist)
+	if err != nil {
+		fmt.Printf("mfwarch: unable to save firmware: %s\n", err)
+		os.Exit(1)
 	}
 }
 
-type BegodeAPIResponse[T any] struct {
-	Code int
-	Data BegodeAPIResponseHeader[T]
+func getLocalFirmwareList(filePath string) (FirmwareList, error) {
+	file, err := os.Open(filePath)
+	if err != nil { return FirmwareList{}, err }
+	defer file.Close()
+
+	definition, err := io.ReadAll(bufio.NewReader(file))
+	if err != nil { return FirmwareList{}, err }
+
+	var parsed FirmwareList
+	err = json.Unmarshal(definition, &parsed)
+	if err != nil { return FirmwareList{}, err }
+
+	return parsed, nil
 }
 
-type BegodeAPIResponseHeader[T any] struct {
-	Current int
-	Pages int
-	Records []T
-}
-
-type BegodeFirmwareList struct {
-	Code string
-	ID int
-	Name string
-	Size int
-	Total int
-}
-
-type BegodeFirmwareDetails struct {
-	ApkWrap string
-	AppType int
-	BriefIntroduction string
-	CompulsoryUpgrading int
-	FirmwareTypeCode string
-	Name string
-	PerfectBug string
-	PkgName string
-	VersionCode int
-	VersionName int
-}
+type None struct {}
