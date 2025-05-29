@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/LukaGiorgadze/gonull"
+	"github.com/davecgh/go-spew/spew"
 )
 
 const begodeFirmwareListURL = "http://one-api.begode.com/agent/dog/wheel/dev/type/page?current=1&size=1000";
@@ -127,29 +130,24 @@ func begodeDownloadAll(destination string, existingFwHashes []string) []Firmware
 			hashString := fmt.Sprintf("%x", hash.Sum(nil))
 
 			path := fmt.Sprintf("%s/%s.bin", destination, hashString)
-			fmt.Println(path)
 			
 			_, err = os.Stat(path)
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				fmt.Printf("mfwarch: unable to stat file: %s\n", err)
 				os.Exit(1)
 			}
-			if err == nil {
-				fmt.Println("skip")
-				continue
-			}
-			fmt.Println("write")
-
-			file, err := os.Create(path)
 			if err != nil {
-				fmt.Printf("mfwarch: unable to create file: %s\n", err)
-				os.Exit(1)
-			}
+				file, err := os.Create(path)
+				if err != nil {
+					fmt.Printf("mfwarch: unable to create file: %s\n", err)
+					os.Exit(1)
+				}
 
-			_, err = file.Write(resBody)
-			if err != nil {
-				fmt.Printf("mfwarch: unable to save firmware: %s\n", err)
-				os.Exit(1)
+				_, err = file.Write(resBody)
+				if err != nil {
+					fmt.Printf("mfwarch: unable to save firmware: %s\n", err)
+					os.Exit(1)
+				}
 			}
 
 			result = append(result, Firmware[BegodeFirmwareMisc]{
@@ -160,6 +158,8 @@ func begodeDownloadAll(destination string, existingFwHashes []string) []Firmware
 				Description: fw.PerfectBug,
 				Hash: hashString,
 				TimeDiscovered: time.Now(),
+				AvailableUpstream: true,
+				OriginalFileName: strings.Replace(fw.ApkWrap, "temp/", "", 1),
 				Misc: BegodeFirmwareMisc {
 					ListSection: item.name,
 					UpgradeRequired: fw.CompulsoryUpgrading != 0,
@@ -168,6 +168,16 @@ func begodeDownloadAll(destination string, existingFwHashes []string) []Firmware
 			})
 		}
 	}
+
+	// WARNING: test code, remove before prod
+
+	hash := sha256.New()
+
+	randomIdx := rand.IntN(len(result))
+	randomDuplicate := result[randomIdx]
+	randomDuplicate.Hash = fmt.Sprintf("%x", hash.Sum([]byte{byte(randomIdx)}))
+	result = append(result, randomDuplicate)
+	spew.Dump(randomDuplicate)
 
 	return result
 }

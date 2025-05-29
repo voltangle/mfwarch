@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 	"github.com/davecgh/go-spew/spew"
 	cp "github.com/otiai10/copy"
@@ -26,7 +27,7 @@ func main() {
 
 		fullList := FirmwareList {
 			LastUpdateTime: time.Now(),	
-			ChangesSinceLastUpdate: 0, // TODO: implement
+			ChangesSinceLastUpdate: 0,
 			Begode: list,
 		}
 
@@ -49,16 +50,57 @@ func main() {
 		fmt.Printf("mfwarch: unable to get local firmware list: %s\n", err)
 		os.Exit(1)
 	}
-	spew.Dump(fwList)
 
 	err = cp.Copy("firmwares", "firmwares2")
 	if err != nil {
 		fmt.Printf("mfwarch: unable to copy firmwares: %s\n", err)
 	}
 
+	fmt.Println("mfwarch: downloading Begode firmwares...")
 	list := begodeDownloadAll("firmwares2", []string{""})
+	for index, item := range list {
+		item.TimeDiscovered = time.Time{}
+		item.TimeCreated = time.Time{}
+		list[index] = item
+	}
 
-	file, err := os.Create("firmwares/firmwares.json")
+	fmt.Println("mfwarch: finding differences...")
+	diff := difference(list, fwList.Begode)
+	spew.Dump(diff)
+	if len(diff) == 0 {
+		fmt.Println("mfwarch: no differences found")
+		list = fwList.Begode
+	} else { // process the changes
+		fmt.Println("mfwarch: found differences")
+		for _, item := range diff {
+			// check if new list has a new firmware
+			if slices.ContainsFunc(list, func(item2 Firmware[BegodeFirmwareMisc]) bool {
+				return item2.Hash == item.Hash
+			}) {
+				fmt.Println("in here")
+				idx := slices.IndexFunc(fwList.Begode,
+					func(fw Firmware[BegodeFirmwareMisc]) bool {
+						return fw.Name == item.Name &&
+						fw.VersionCode == item.VersionCode &&
+						fw.Description == item.Description &&
+						fw.Misc.ListSection == item.Misc.ListSection
+				})
+				fmt.Println(idx)
+				spew.Dump(fwList.Begode[idx])
+
+				if idx != -1 {
+					item.SilentReplacementOf = fwList.Begode[idx].Hash
+					fwList.Begode[idx].AvailableUpstream = false
+					item.TimeDiscovered = time.Now()
+					fwList.Begode = append(fwList.Begode, item)
+					spew.Dump(fwList.Begode[len(fwList.Begode)-1])
+				}
+			}
+		}
+	}
+
+	os.Remove("firmwares2/firmwares.json")
+	file, err := os.Create("firmwares2/firmwares.json")
 	if err != nil {
 		fmt.Printf("mfwarch: unable to create file: %s\n", err)
 		os.Exit(1)
@@ -66,8 +108,8 @@ func main() {
 
 	fullList := FirmwareList {
 		LastUpdateTime: time.Now(),	
-		ChangesSinceLastUpdate: 0, // TODO: implement
-		Begode: list,
+		ChangesSinceLastUpdate: len(diff),
+		Begode: fwList.Begode,
 	}
 
 	fwlist, err := json.MarshalIndent(fullList, "", " ")
@@ -81,6 +123,9 @@ func main() {
 		fmt.Printf("mfwarch: unable to save firmware: %s\n", err)
 		os.Exit(1)
 	}
+
+	os.RemoveAll("firmwares")
+	os.Rename("firmwares2", "firmwares")
 }
 
 func getLocalFirmwareList(filePath string) (FirmwareList, error) {
