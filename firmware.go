@@ -5,9 +5,25 @@ import (
 	"github.com/LukaGiorgadze/gonull"
 )
 
+type FirmwareType int
+
+const (
+	FirmwareTypeMotherboard FirmwareType = iota
+	FirmwareTypeBMS
+)
+
+func (fwt FirmwareType)String() string {
+	switch fwt {
+		case FirmwareTypeMotherboard: return "motherboard"
+		case FirmwareTypeBMS: return "bms"
+	}
+	return "unknown"
+}
+
 type Firmware[T any] struct {
 	Name string
 	ForWheel string
+	Type FirmwareType
 	VersionCode string
 	VersionNumber gonull.Nullable[int]
 	Description string
@@ -29,37 +45,42 @@ type FirmwareList struct {
 	Begode []Firmware[BegodeFirmwareMisc]
 }
 
-func difference[T comparable](a, b []Firmware[T]) []Firmware[T] {
-    // reorder the input,
-    // so that we can check the longer slice over the shorter one
-    longer, shorter := a, b
-    if len(b) > len(a) {
-        longer, shorter = b, a
-    }
-
-	for index, item := range longer {
-		newItem := item // idk if Go for loops have their variables as copies or refs, so ima play it safe
-		newItem.TimeCreated = time.Time{}
-		newItem.TimeDiscovered = time.Time{}
-		longer[index] = newItem
-	}
-
-	for index, item := range shorter {
-		newItem := item // idk if Go for loops have their variables as copies or refs, so ima play it safe
-		newItem.TimeCreated = time.Time{}
-		newItem.TimeDiscovered = time.Time{}
-		shorter[index] = newItem
-	}
-
-    mb := make(map[Firmware[T]]struct{}, len(shorter))
-    for _, x := range shorter {
-        mb[x] = struct{}{}
-    }
+func difference[T comparable](slice1, slice2 []Firmware[T]) []Firmware[T] {
     var diff []Firmware[T]
-    for _, x := range longer {
-        if _, found := mb[x]; !found {
-            diff = append(diff, x)
+
+	for index, item := range slice1 {
+		item.TimeCreated = time.Time{}
+		item.TimeDiscovered = time.Time{}
+		slice1[index] = item
+	}
+
+	for index, item := range slice2 {
+		item.TimeCreated = time.Time{}
+		item.TimeDiscovered = time.Time{}
+		slice2[index] = item
+	}
+
+    // Loop two times, first to find slice1 strings not in slice2,
+    // second loop to find slice2 strings not in slice1
+    for i := 0; i < 2; i++ {
+        for _, s1 := range slice1 {
+            found := false
+            for _, s2 := range slice2 {
+                if s1 == s2 {
+                    found = true
+                    break
+                }
+            }
+            // String not found. We add it to return slice
+            if !found {
+                diff = append(diff, s1)
+            }
+        }
+        // Swap the slices, only if it was the first loop
+        if i == 0 {
+            slice1, slice2 = slice2, slice1
         }
     }
+
     return diff
 }

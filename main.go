@@ -18,7 +18,7 @@ func main() {
 	_, err := os.Stat("firmwares")
 	if os.IsNotExist(err) {
 		os.Mkdir("firmwares", 0770)
-		list := begodeDownloadAll("firmwares", []string{""})
+		list := begodeDownloadAll("firmwares")
 		file, err := os.Create("firmwares/firmwares.json")
 		if err != nil {
 			fmt.Printf("mfwarch: unable to create file: %s\n", err)
@@ -57,7 +57,7 @@ func main() {
 	}
 
 	fmt.Println("mfwarch: downloading Begode firmwares...")
-	list := begodeDownloadAll("firmwares2", []string{""})
+	list := begodeDownloadAll("firmwares2")
 	for index, item := range list {
 		item.TimeDiscovered = time.Time{}
 		item.TimeCreated = time.Time{}
@@ -67,6 +67,7 @@ func main() {
 	fmt.Println("mfwarch: finding differences...")
 	diff := difference(list, fwList.Begode)
 	spew.Dump(diff)
+	fmt.Println(len(diff))
 	if len(diff) == 0 {
 		fmt.Println("mfwarch: no differences found")
 		list = fwList.Begode
@@ -77,24 +78,43 @@ func main() {
 			if slices.ContainsFunc(list, func(item2 Firmware[BegodeFirmwareMisc]) bool {
 				return item2.Hash == item.Hash
 			}) {
-				fmt.Println("in here")
+				// search for silent replacements
 				idx := slices.IndexFunc(fwList.Begode,
 					func(fw Firmware[BegodeFirmwareMisc]) bool {
 						return fw.Name == item.Name &&
 						fw.VersionCode == item.VersionCode &&
 						fw.Description == item.Description &&
-						fw.Misc.ListSection == item.Misc.ListSection
+						fw.Misc.ListSection == item.Misc.ListSection &&
+						fw.Hash != item.Hash
 				})
-				fmt.Println(idx)
-				spew.Dump(fwList.Begode[idx])
 
 				if idx != -1 {
 					item.SilentReplacementOf = fwList.Begode[idx].Hash
-					fwList.Begode[idx].AvailableUpstream = false
-					item.TimeDiscovered = time.Now()
-					fwList.Begode = append(fwList.Begode, item)
-					spew.Dump(fwList.Begode[len(fwList.Begode)-1])
 				}
+				// search for reappearances
+				idx = slices.IndexFunc(fwList.Begode,
+					func(fw Firmware[BegodeFirmwareMisc]) bool {
+						return fw.Name == item.Name &&
+						fw.VersionCode == item.VersionCode &&
+						fw.Description == item.Description &&
+						fw.Misc.ListSection == item.Misc.ListSection &&
+						fw.Hash == item.Hash
+				})
+				if idx != -1 {
+					fwList.Begode[idx].AvailableUpstream = true
+					continue
+				}
+
+				item.TimeDiscovered = time.Now()
+				fwList.Begode = append(fwList.Begode, item)
+			}
+
+			// if any firmwares were removed
+			idx := slices.IndexFunc(fwList.Begode, func(item2 Firmware[BegodeFirmwareMisc]) bool {
+				return item2.Hash == item.Hash
+			})
+			if idx != -1 {
+				fwList.Begode[idx].AvailableUpstream = false
 			}
 		}
 	}
